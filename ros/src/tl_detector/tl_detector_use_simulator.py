@@ -29,10 +29,16 @@ class TLDetector(object):
 	self.waypoints_2d = None
 	self.waypoint_tree = None
 
-	self.stopline_2d = None
-	self.stopline_tree = None
+	#the location of stopline
+	self.stopline_2d = [[1148.56, 1184.65],[1559.2, 1158.43],[2122.14, 1526.79],[2175.237, 1795.71],
+			    [1493.29, 2947.67],[821.96, 2905.8],[161.76, 2303.82],[351.84, 1574.65]]
 
-        self.red_light = []
+	self.stopline_tree = KDTree(self.stopline_2d)
+
+	#set the light's initial state not red
+        self.red_light = [-1,-1,-1,-1,-1,-1,-1,-1]
+
+	self.lights = []
 
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
 	rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
@@ -60,15 +66,13 @@ class TLDetector(object):
     def publish_redlight_idx(self):
 	
 	#get the closest traffic light's index in stopline_2d
-	closest_light_idx =self.get_closest_idx(self.pose.pose.position.x, self.pose.pose.position.y, self.stopline_tree, self.stopline_2d)
-	
+	closest_light_idx =self.get_closest_redlight_idx()
+
 	#get the state of closest light, if it's red light, get it's index in base_waypoint and publish, if not red light publish -1.
-	redlight_state = self.red[closest_light_idx]
+	redlight_state = self.red_light[closest_light_idx]
+
 	if redlight_state == 1:
-	    x_red = stopline_2d[closest_light_idx][0]
-	    y_red = stopline_2d[closest_light_idx][0]
-	    
-	    closest_red_light_idx = get_closest_idx(x_red, y_red, self.waypoint_tree, self.waypoints_2d)
+	    closest_red_light_idx =self.get_closest_waypoint_idx(closest_light_idx)
 	    self.upcoming_red_light_pub.publish(Int32(closest_red_light_idx))
 	
 	else:
@@ -84,34 +88,54 @@ class TLDetector(object):
             self.waypoint_tree = KDTree(self.waypoints_2d)
 
     def traffic_cb(self, msg):
-	self.red_light.clear()
+	self.lights = msg.lights
 
-	if not self.stopline_2d:
-            self.stopline_2d = [[waypoint.pose.pose.position.x, waypoint.pose.pose.position.y] for waypoint in msg.lights]
-            self.stopline_tree = KDTree(self.stopline_2d)
+	light_state = [trafficlight.state for trafficlight in msg.lights]
 
-	for waypoint in msg.lights:
-	    if waypoint.state == RED:
-		self.red.append[1]
+	for i, state in enumerate(light_state):
+	    if state == 0:
+		self.red_light[i] = 1
 	    else:
-		self.red.append[-1]
+		self.red_light[i] = -1
 
-    def get_closest_idx(self, x, y, location_tree, location_2d):
-
-        #finde the closest stopline's/waypoint's idx
-        closest_idx = location_tree.query([x,y], 1)[1]
+    def get_closest_redlight_idx(self):
+	#use this function to get the closest traffic light's index in stopline_2d
+	x = self.pose.pose.position.x
+        y = self.pose.pose.position.y
+       
+        closest_idx = self.stopline_tree.query([x,y], 1)[1]
 
         # check if closest is ahead or behind car
-        closest_location = location_2d[closest_idx]
-        pre_closest_location = location_2d[closest_idx-1]
+        closest_location = self.stopline_2d[closest_idx]
+        pre_closest_location = self.stopline_2d[closest_idx-1]
 
         cl_vect = np.array(closest_location)
         pre_vect = np.array(pre_closest_location)
         pos_vect = np.array([x,y])
 
         if np.dot(cl_vect - pre_vect, pos_vect - cl_vect) > 0:
-            closest_idx = (closest_idx + 1) % len(self.location_2d)
+            closest_idx = (closest_idx + 1) % len(self.stopline_2d)
         return closest_idx
+
+    def get_closest_waypoint_idx(self, closest_light_idx):
+	#use this function to get the redlight's index in waypoints_2d
+	x = self.stopline_2d[closest_light_idx][0]
+        y = self.stopline_2d[closest_light_idx][1]
+
+        closest_idx = self.waypoint_tree.query([x,y], 1)[1]
+        
+        # check if closest is ahead or behind car
+        closest_waypoint = self.waypoints_2d[closest_idx]
+        pre_closest_waypoint = self.waypoints_2d[closest_idx-1]
+        
+        cl_vect = np.array(closest_waypoint)
+        pre_vect = np.array(pre_closest_waypoint)
+        pos_vect = np.array([x,y])
+
+        if np.dot(cl_vect - pre_vect, pos_vect - cl_vect) > 0:
+            closest_idx = (closest_idx + 1) % len(self.waypoints_2d)
+        return closest_idx
+
 
 if __name__ == '__main__':
     try:
